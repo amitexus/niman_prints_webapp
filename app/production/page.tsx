@@ -3,7 +3,7 @@
 
 import { useMemo, useState } from 'react';
 import {
-  Search, Plus, X, Eye, Clock3, CheckCircle2,
+  Search, Plus, X, Eye, Clock3, CheckCircle2, Factory,
   PackageCheck, AlertTriangle, ClipboardList, 
 } from 'lucide-react';
 
