@@ -3,6 +3,8 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from app.routes.businesses import router as businesses_router
+from app.routes.auth import router as auth_router
 
 from app.database import (
     connect_to_mongodb,
@@ -66,6 +68,13 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+app.include_router(
+    businesses_router,
+    prefix=settings.api_prefix,
+)
+
+app.include_router(auth_router, prefix=settings.api_prefix)
 
 
 @app.get("/")
