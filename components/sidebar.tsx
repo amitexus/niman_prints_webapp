@@ -3,7 +3,7 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import {
   BarChart3,
   Bot,
@@ -11,6 +11,7 @@ import {
   ChevronDown,
   Gift,
   LayoutDashboard,
+  LogOut,
   Megaphone,
   PanelLeftClose,
   Settings,
@@ -52,7 +53,35 @@ const groups = [
 
 export function Sidebar() {
   const pathname = usePathname();
+  const router = useRouter();
+
   const [collapsed, setCollapsed] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [logoutError, setLogoutError] = useState('');
+
+  async function handleLogout() {
+    if (loggingOut) return;
+
+    setLoggingOut(true);
+    setLogoutError('');
+
+    try {
+      const response = await fetch('/api/auth/logout', {
+        method: 'POST',
+        cache: 'no-store',
+      });
+
+      if (!response.ok) {
+        throw new Error('Unable to log out. Please try again.');
+      }
+
+      router.replace('/login');
+      router.refresh();
+    } catch {
+      setLogoutError('Logout failed. Please try again.');
+      setLoggingOut(false);
+    }
+  }
 
   return (
     <aside
@@ -173,6 +202,23 @@ export function Sidebar() {
           <Settings size={17} />
           {!collapsed && 'Settings'}
         </Link>
+
+        {logoutError && !collapsed && (
+          <p className="mt-2 px-2 text-[10px] text-red-400">
+            {logoutError}
+          </p>
+        )}
+
+        <button
+          type="button"
+          onClick={handleLogout}
+          disabled={loggingOut}
+          title={collapsed ? 'Logout' : undefined}
+          className="mt-2 flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-[12px] font-medium text-rose-400 transition hover:bg-rose-500/10 hover:text-rose-300 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <LogOut size={17} />
+          {!collapsed && (loggingOut ? 'Signing out...' : 'Logout')}
+        </button>
 
         <div
           className={`mt-3 flex items-center gap-3 rounded-xl border border-line bg-white/[.025] p-2.5 ${

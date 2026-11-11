@@ -1,15 +1,14 @@
 
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Plus, Search, Package, Boxes, TrendingUp,
   AlertTriangle, Pencil, Trash2, X, Filter,
-  ChevronDown, Tag, IndianRupee
+  ChevronDown, Tag, IndianRupee, RotateCcw
 } from 'lucide-react';
 
 import {
-  initialProducts,
   productCategories,
   type Product,
   type ProductCategory,
@@ -30,12 +29,56 @@ const emptyForm = {
 };
 
 export default function ProductsPage() {
-  const [products, setProducts] = useState<Product[]>(initialProducts);
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState('All');
+  const [statusFilter, setStatusFilter] = useState('Active');
   const [modalOpen, setModalOpen] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
+
+  useEffect(() => {
+    async function loadProducts() {
+      try {
+        setLoading(true);
+        setError("");
+
+        const response = await fetch("/api/products");
+
+        if (!response.ok) {
+          throw new Error("Unable to load products from the server.");
+        }
+
+        const data = await response.json();
+
+        const formattedProducts: Product[] = data.map((item: any) => ({
+          id: item.id,
+          name: item.name,
+          sku: item.sku,
+          category: item.category,
+          costPrice: item.cost_price,
+          sellingPrice: item.selling_price,
+          stock: item.stock_quantity,
+          lowStockAt: item.low_stock_threshold,
+          status: item.is_active ? "Active" : "Archived",
+          customization: item.customization ?? [],
+        }));
+
+        setProducts(formattedProducts);
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : "Something went wrong."
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadProducts();
+  }, []);
+
 
   const filtered = useMemo(() => {
     return products.filter((product) => {
@@ -44,10 +87,16 @@ export default function ProductsPage() {
           .toLowerCase()
           .includes(query.toLowerCase());
 
-      return matchesSearch &&
-        (category === 'All' || product.category === category);
+      const matchesCategory =
+        category === 'All' || product.category === category;
+
+      const matchesStatus =
+        statusFilter === 'All' || product.status === statusFilter;
+
+      return matchesSearch && matchesCategory && matchesStatus;
     });
-  }, [products, query, category]);
+  }, [products, query, category, statusFilter]);
+
 
   const activeCount = products.filter(p => p.status === 'Active').length;
   const lowStock = products.filter(
@@ -83,7 +132,9 @@ export default function ProductsPage() {
     setModalOpen(true);
   }
 
-  function saveProduct(e: React.FormEvent<HTMLFormElement>) {
+
+
+  async function saveProduct(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     const cost = Number(form.costPrice);
@@ -100,43 +151,165 @@ export default function ProductsPage() {
       !Number.isInteger(threshold) ||
       cost < 0 || selling < 0 || stock < 0 || threshold < 0
     ) {
+      setError("Please enter valid product information.");
       return;
     }
 
-    const productData: Product = {
-      id: editingId ?? `PRD-${Date.now()}`,
+    const productPayload = {
       name: form.name.trim(),
       sku: form.sku.trim(),
       category: form.category,
-      costPrice: cost,
-      sellingPrice: selling,
-      stock,
-      lowStockAt: threshold,
-      status: 'Active',
-      customization: form.customization
-        .split(',')
-        .map(value => value.trim())
-        .filter(Boolean),
+      description: "",
+      cost_price: cost,
+      selling_price: selling,
+      stock_quantity: stock,
+      low_stock_threshold: threshold,
+      unit: "piece",
+      is_active: true,
     };
 
-    if (editingId) {
-      setProducts(previous =>
-        previous.map(p => p.id === editingId ? productData : p)
+    try {
+      setError("");
+
+      const isEditing = editingId !== null;
+
+      console.log("PRODUCT SAVE DEBUG:", {
+        editingId,
+        isEditing,
+        method: isEditing ? "PUT" : "POST",
+      });
+
+      const response = await fetch(
+        isEditing
+          ? `/api/products/${editingId}`
+          : "/api/products",
+        {
+          method: isEditing ? "PUT" : "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(productPayload),
+        }
       );
-    } else {
-      setProducts(previous => [productData, ...previous]);
-    }
 
-    setModalOpen(false);
-    setEditingId(null);
-    setForm(emptyForm);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Unable to save product.");
+      }
+
+      const savedProduct: Product = {
+        id: data.id,
+        name: data.name,
+        sku: data.sku,
+        category: data.category,
+        costPrice: data.cost_price,
+        sellingPrice: data.selling_price,
+        stock: data.stock_quantity,
+        lowStockAt: data.low_stock_threshold,
+        status: data.is_active ? "Active" : "Archived",
+        customization: data.customization ?? [],
+      };
+
+      if (isEditing) {
+        setProducts(previous =>
+          previous.map(product =>
+            product.id === savedProduct.id ? savedProduct : product
+          )
+        );
+      } else {
+        setProducts(previous => [savedProduct, ...previous]);
+      }
+
+      setModalOpen(false);
+      setEditingId(null);
+      setForm(emptyForm);
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Something went wrong."
+      );
+    }
   }
 
-  function deleteProduct(id: string) {
-    if (window.confirm('Delete this product? This cannot be undone.')) {
-      setProducts(previous => previous.filter(p => p.id !== id));
+
+
+  async function deleteProduct(id: string) {
+    if (!window.confirm("Archive this product? It will be marked inactive.")) {
+      return;
+    }
+
+    try {
+      setError("");
+
+      const response = await fetch(`/api/products/${id}`, {
+        method: "DELETE",
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Unable to archive product.");
+      }
+
+      setProducts(previous =>
+        previous.map(product =>
+          product.id === id
+            ? { ...product, status: "Archived" }
+            : product
+        )
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to archive product."
+      );
     }
   }
+
+
+  async function restoreProduct(product: Product) {
+    try {
+      setError("");
+
+      const response = await fetch(`/api/products/${product.id}`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          name: product.name,
+          sku: product.sku,
+          category: product.category,
+          description: "",
+          cost_price: product.costPrice,
+          selling_price: product.sellingPrice,
+          stock_quantity: product.stock,
+          low_stock_threshold: product.lowStockAt,
+          unit: "piece",
+          is_active: true,
+        }),
+      });
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data.detail || "Unable to restore product.");
+      }
+
+      setProducts(previous =>
+        previous.map(item =>
+          item.id === product.id
+            ? { ...item, status: "Active" }
+            : item
+        )
+      );
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "Unable to restore product."
+      );
+    }
+  }
+
+
 
   return (
     <main className="min-w-0 flex-1">
@@ -169,15 +342,6 @@ export default function ProductsPage() {
           </h2>
           <p className="mt-1 text-xs text-slate-500">
             Control your catalog, pricing, margins and stock.
-          </p>
-        </div>
-
-        <div className="rounded-xl border border-amber-400/15 bg-amber-400/[.05] px-4 py-3">
-          <p className="text-[11px] font-semibold text-amber-100">
-            Preview mode · Sample product data
-          </p>
-          <p className="mt-1 text-[10px] text-amber-100/55">
-            Changes currently remain in browser memory and reset on refresh.
           </p>
         </div>
 
@@ -240,9 +404,9 @@ export default function ProductsPage() {
             <p className="mt-2 text-xl font-semibold text-white">
               {products.length
                 ? `${(products.reduce((sum, p) =>
-                    sum + (p.sellingPrice > 0
-                      ? (p.sellingPrice - p.costPrice) / p.sellingPrice
-                      : 0), 0) / products.length * 100).toFixed(1)}%`
+                  sum + (p.sellingPrice > 0
+                    ? (p.sellingPrice - p.costPrice) / p.sellingPrice
+                    : 0), 0) / products.length * 100).toFixed(1)}%`
                 : '0%'}
             </p>
             <p className="mt-1 text-[10px] text-slate-600">
@@ -284,6 +448,21 @@ export default function ProductsPage() {
                   ))}
                 </select>
                 <ChevronDown size={13} className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500" />
+              </div>
+              <div className="relative">
+                <select
+                  value={statusFilter}
+                  onChange={e => setStatusFilter(e.target.value)}
+                  className="h-full appearance-none rounded-xl border border-line bg-canvas py-2.5 pl-3 pr-9 text-xs text-slate-300 outline-none"
+                >
+                  <option value="Active">Active products</option>
+                  <option value="Archived">Archived products</option>
+                  <option value="All">All products</option>
+                </select>
+                <ChevronDown
+                  size={13}
+                  className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-500"
+                />
               </div>
             </div>
           </div>
@@ -330,22 +509,37 @@ export default function ProductsPage() {
                         </span>
                       </td>
                       <td className="px-5 py-4">
+
                         <div className="flex gap-1">
-                          <button
-                            onClick={() => openEdit(product)}
-                            title="Edit product"
-                            className="rounded-lg border border-line p-2 text-slate-400 hover:text-violet-300"
-                          >
-                            <Pencil size={13} />
-                          </button>
-                          <button
-                            onClick={() => deleteProduct(product.id)}
-                            title="Delete product"
-                            className="rounded-lg border border-line p-2 text-slate-400 hover:text-rose-300"
-                          >
-                            <Trash2 size={13} />
-                          </button>
+                          {product.status === "Archived" ? (
+                            <button
+                              onClick={() => restoreProduct(product)}
+                              title="Restore product"
+                              className="rounded-lg border border-line p-2 text-emerald-400 hover:bg-emerald-400/10"
+                            >
+                              <RotateCcw size={13} />
+                            </button>
+                          ) : (
+                            <>
+                              <button
+                                onClick={() => openEdit(product)}
+                                title="Edit product"
+                                className="rounded-lg border border-line p-2 text-slate-400 hover:text-violet-300"
+                              >
+                                <Pencil size={13} />
+                              </button>
+
+                              <button
+                                onClick={() => deleteProduct(product.id)}
+                                title="Archive product"
+                                className="rounded-lg border border-line p-2 text-slate-400 hover:text-rose-300"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            </>
+                          )}
                         </div>
+
                       </td>
                     </tr>
                   );
