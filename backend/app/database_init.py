@@ -48,12 +48,30 @@ def initialize_database(db: Database):
         ],
         "customers": [
             ([("business_id", ASCENDING), ("phone", ASCENDING)], {}),
-        ],
-        "orders": [
-            ([("business_id", ASCENDING), ("order_number", ASCENDING)],
-             {"unique": True}),
-            ([("business_id", ASCENDING), ("created_at", DESCENDING)], {}),
-        ],
+            (
+            [("business_id", ASCENDING), ("normalized_phone", ASCENDING)],
+            {
+            "unique": True,
+            "partialFilterExpression": {
+                "normalized_phone": {"$type": "string", "$gt": ""}
+               },
+            },
+            ),
+            ],
+       "orders": [
+    ([("business_id", ASCENDING), ("order_number", ASCENDING)],
+     {"unique": True}),
+    ([("business_id", ASCENDING), ("created_at", DESCENDING)], {}),
+    (
+        [("business_id", ASCENDING), ("import_key", ASCENDING)],
+        {
+            "unique": True,
+            "partialFilterExpression": {
+                "import_key": {"$type": "string", "$gt": ""}
+            },
+        },
+    ),
+],
         "production_jobs": [
             ([("business_id", ASCENDING), ("status", ASCENDING)], {}),
         ],

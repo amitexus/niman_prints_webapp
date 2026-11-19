@@ -11,3 +11,17 @@ dist/
 .vercel/
 .DS_Store
 *.log
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Virtual environments
+venv/
+.venv/
+backend/venv/
+
+# Python environment files
+.env
+.env.*

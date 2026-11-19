@@ -6,3 +6,5 @@ python-dotenv
 pwdlib[argon2]
 PyJWT
 email-validator
+openpyxl
+python-multipart
