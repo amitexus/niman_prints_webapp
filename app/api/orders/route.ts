@@ -77,9 +77,10 @@ async function backendFetch(
         Number.isFinite(data.expires_in) &&
         data.expires_in > 0
       ) {
-        newAccessToken = data.access_token;
+        const refreshedAccessToken: string = data.access_token;
+        newAccessToken = refreshedAccessToken;
         expiresIn = data.expires_in;
-        backendResponse = await send(newAccessToken);
+       backendResponse = await send(refreshedAccessToken);
       }
     }
   }
@@ -121,11 +122,13 @@ export async function GET(request: NextRequest) {
 
     const search = params.get("search");
     const status = params.get("status");
+    const customerId = params.get("customer_id");
     const skip = params.get("skip");
     const limit = params.get("limit");
 
     if (search) query.set("search", search);
     if (status) query.set("status", status);
+    if (customerId) query.set("customer_id", customerId);
     if (skip) query.set("skip", skip);
     if (limit) query.set("limit", limit);
 

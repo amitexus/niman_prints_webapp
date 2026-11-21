@@ -184,3 +184,60 @@ export async function POST(
     "/payments"
   );
 }
+
+export async function GET(
+  request: NextRequest,
+  context: RouteContext
+) {
+  try {
+    if (!BACKEND_URL) {
+      return NextResponse.json(
+        { detail: "Backend API URL is not configured." },
+        { status: 500 }
+      );
+    }
+
+    const { orderId } = await context.params;
+
+    if (!/^[a-fA-F0-9]{24}$/.test(orderId)) {
+      return NextResponse.json(
+        { detail: "Invalid order ID." },
+        { status: 400 }
+      );
+    }
+
+    const accessToken = request.cookies.get("np_access_token")?.value;
+
+    if (!accessToken) {
+      return NextResponse.json(
+        { detail: "Please log in again." },
+        { status: 401 }
+      );
+    }
+
+    const response = await fetch(
+      `${BACKEND_URL}/api/v1/orders/${orderId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+        },
+        cache: "no-store",
+      }
+    );
+
+    const data = await response.json().catch(() => ({
+      detail: "Invalid response from backend.",
+    }));
+
+    return NextResponse.json(data, {
+      status: response.status,
+    });
+  } catch (error) {
+    console.error("Order GET error:", error);
+
+    return NextResponse.json(
+      { detail: "Unable to load order details." },
+      { status: 502 }
+    );
+  }
+}

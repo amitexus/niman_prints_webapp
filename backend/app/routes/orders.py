@@ -8,6 +8,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 from app.database import get_database
+from app import database
+from app.services.customer_stats_service import recalculate_customer_stats
 from app.core.dependencies import get_current_user
 from app.schemas.order import (
     OrderCreate,
@@ -188,12 +190,35 @@ def create_order(
         "cod_settlement_status": calculate_cod_settlement_status(cod_amount, 0),
     })
 
-    result = db.orders.insert_one(document)
+    if database.client is None:
+        raise HTTPException(
+           status_code=503,
+           detail="Database connection is unavailable",
+    )
 
-    saved_order = db.orders.find_one({
-        "_id": result.inserted_id,
-        "business_id": business_id,
-    })
+    with database.client.start_session() as session:
+         with session.start_transaction():
+
+            result = db.orders.insert_one(
+                document,
+                session=session,
+        )
+
+         if customer_id:
+            recalculate_customer_stats(
+                db=db,
+                business_id=business_id,
+                customer_id=customer_id,
+                session=session,
+            )
+
+            saved_order = db.orders.find_one(
+              {
+                 "_id": result.inserted_id,
+                 "business_id": business_id,
+             },
+            session=session,
+        )
 
     return serialize_order(saved_order)
 
@@ -202,6 +227,7 @@ def create_order(
 def get_orders(
     search: str = Query(default="", max_length=100),
     status: str | None = None,
+    customer_id: str | None = None,
     skip: int = Query(default=0, ge=0),
     limit: int = Query(default=100, ge=1, le=500),
     current_user: dict = Depends(get_current_user),
@@ -213,6 +239,9 @@ def get_orders(
 
     if status:
         query["status"] = status
+
+    if customer_id:
+        query["customer_id"] = customer_id
 
     if search:
         query["$or"] = [
@@ -309,13 +338,40 @@ def update_order(
     if existing.get("delivered_at"):
         updated_document["delivered_at"] = existing["delivered_at"]
 
-    db.orders.update_one(
-        {
-            "_id": ObjectId(order_id),
-            "business_id": business_id,
-        },
-        {"$set": updated_document},
-    )
+    if database.client is None:
+        raise HTTPException(
+          status_code=503,
+          detail="Database connection is unavailable",
+        )
+
+    old_customer_id = existing.get("customer_id")
+    new_customer_id = updated_document.get("customer_id")
+
+    with database.client.start_session() as session:
+        with session.start_transaction():
+
+            db.orders.update_one(
+               {
+                 "_id": ObjectId(order_id),
+                 "business_id": business_id,
+               },
+            {"$set": updated_document},
+            session=session,
+            )
+
+        customer_ids = {
+            customer_id
+            for customer_id in (old_customer_id, new_customer_id)
+            if customer_id
+        }
+
+        for customer_id in customer_ids:
+            recalculate_customer_stats(
+                db=db,
+                business_id=business_id,
+                customer_id=customer_id,
+                session=session,
+            )
 
     updated_order = find_order(db, order_id, business_id)
     return serialize_order(updated_order)
@@ -333,6 +389,12 @@ def update_delivery_status(
     order = find_order(db, order_id, business_id)
     ensure_manual_order(order)
 
+    if database.client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Database connection is unavailable",
+        )
+
     now = datetime.now(timezone.utc)
 
     update_fields = {
@@ -345,13 +407,27 @@ def update_delivery_status(
     elif data.delivery_status in ("Pending", "Shipped", "Returned"):
         update_fields["delivered_at"] = None
 
-    db.orders.update_one(
-        {
-            "_id": ObjectId(order_id),
-            "business_id": business_id,
-        },
-        {"$set": update_fields},
-    )
+    customer_id = order.get("customer_id")
+
+    with database.client.start_session() as session:
+        with session.start_transaction():
+
+            db.orders.update_one(
+                {
+                    "_id": ObjectId(order_id),
+                    "business_id": business_id,
+                },
+                {"$set": update_fields},
+                session=session,
+            )
+
+            if customer_id:
+                recalculate_customer_stats(
+                    db=db,
+                    business_id=business_id,
+                    customer_id=customer_id,
+                    session=session,
+                )
 
     updated_order = find_order(db, order_id, business_id)
     return serialize_order(updated_order)
@@ -437,18 +513,38 @@ def cancel_order(
     existing = find_order(db, order_id, business_id)
     ensure_manual_order(existing)
 
-    db.orders.update_one(
-        {
-            "_id": ObjectId(order_id),
-            "business_id": business_id,
-        },
-        {
-            "$set": {
-                "status": "Cancelled",
-                "updated_at": datetime.now(timezone.utc),
-            }
-        },
-    )
+    if database.client is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Database connection is unavailable",
+        )
+
+    customer_id = existing.get("customer_id")
+
+    with database.client.start_session() as session:
+        with session.start_transaction():
+
+            db.orders.update_one(
+                {
+                    "_id": ObjectId(order_id),
+                    "business_id": business_id,
+                },
+                {
+                    "$set": {
+                        "status": "Cancelled",
+                        "updated_at": datetime.now(timezone.utc),
+                    }
+                },
+                session=session,
+            )
+
+            if customer_id:
+                recalculate_customer_stats(
+                    db=db,
+                    business_id=business_id,
+                    customer_id=customer_id,
+                    session=session,
+                )
 
     return {
         "success": True,

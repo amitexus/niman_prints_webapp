@@ -8,6 +8,7 @@ from app.routes.auth import router as auth_router
 from app.routes.products import router as products_router
 from app.routes.customer_import import router as customer_import_router
 from app.routes.orders import router as orders_router
+from app.routes.customers import router as customers_router
 
 from app.database import (
     connect_to_mongodb,
@@ -84,6 +85,8 @@ app.include_router(products_router, prefix=settings.api_prefix)
 app.include_router(customer_import_router, prefix=settings.api_prefix)
 
 app.include_router(orders_router, prefix=settings.api_prefix)
+
+app.include_router(customers_router, prefix=settings.api_prefix)
 
 
 @app.get("/")

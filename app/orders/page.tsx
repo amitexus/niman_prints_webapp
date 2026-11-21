@@ -100,8 +100,11 @@ const tabs = [
   'Design Approval',
   'In Production',
   'Ready to Ship',
+  'Shipped',
+  'Delivered',
   'Completed',
   'Cancelled',
+  'Returned',
 ];
 
 const statusStyles: Record<OrderStatus, string> = {
@@ -157,9 +160,9 @@ function mapOrder(item: ApiOrder): Order {
     profit: Number(item.profit || 0),
     address: item.customer_address || '',
     deliveryType: item.delivery_type || '',
-    source:item.source === 'excel_import' || item.source === 'historical'
-    ? 'historical'
-    : 'manual',
+    source: item.source === 'excel_import' || item.source === 'historical'
+      ? 'historical'
+      : 'manual',
   };
 }
 
@@ -190,43 +193,43 @@ export default function OrdersPage() {
 
 
   const [form, setForm] = useState({
-  customer: '',
-  address: '',
-  phone: '',
-  product: '',
-  quantity: '1',
-  rate: '',
-  deliveryCharge: '0',
-  paymentOption: 'COD' as 'COD' | 'Online' | 'Both',
-  onlinePayment: '0',
-  deliveryType: 'Branch-Door',
-  cost: '0',
-});
+    customer: '',
+    address: '',
+    phone: '',
+    product: '',
+    quantity: '1',
+    rate: '',
+    deliveryCharge: '0',
+    paymentOption: 'COD' as 'COD' | 'Online' | 'Both',
+    onlinePayment: '0',
+    deliveryType: 'Branch-Door',
+    cost: '0',
+  });
 
-const quantity = Number(form.quantity) || 0;
-const rate = Number(form.rate) || 0;
-const deliveryCharge = Number(form.deliveryCharge) || 0;
-const cost = Number(form.cost) || 0;
+  const quantity = Number(form.quantity) || 0;
+  const rate = Number(form.rate) || 0;
+  const deliveryCharge = Number(form.deliveryCharge) || 0;
+  const cost = Number(form.cost) || 0;
 
-const totalOrder = quantity * rate + deliveryCharge;
+  const totalOrder = quantity * rate + deliveryCharge;
 
-const onlinePayment =
-  form.paymentOption === 'COD'
-    ? 0
-    : form.paymentOption === 'Online'
-      ? totalOrder
-      : Number(form.onlinePayment) || 0;
+  const onlinePayment =
+    form.paymentOption === 'COD'
+      ? 0
+      : form.paymentOption === 'Online'
+        ? totalOrder
+        : Number(form.onlinePayment) || 0;
 
-const codAmount = Math.max(0, totalOrder - onlinePayment);
+  const codAmount = Math.max(0, totalOrder - onlinePayment);
 
-const profit = totalOrder - cost - deliveryCharge;
+  const profit = totalOrder - cost - deliveryCharge;
 
-const paymentStatus =
-  onlinePayment <= 0
-    ? 'Unpaid'
-    : onlinePayment >= totalOrder
-      ? 'Paid'
-      : 'Partial';
+  const paymentStatus =
+    onlinePayment <= 0
+      ? 'Unpaid'
+      : onlinePayment >= totalOrder
+        ? 'Paid'
+        : 'Partial';
 
   async function loadOrders() {
     setLoading(true);
@@ -296,115 +299,115 @@ const paymentStatus =
     (order) => order.status === 'Completed'
   ).length;
 
- 
-async function createOrder(event: FormEvent<HTMLFormElement>) {
-  event.preventDefault();
-  setSaving(true);
-  setError('');
-  setNotice('');
 
-  const qty = Number(form.quantity);
-  const unitRate = Number(form.rate);
-  const delivery = Number(form.deliveryCharge);
-  const total = qty * unitRate + delivery;
-  const online = onlinePayment;
-  const cod = codAmount;
-  const orderCost = Number(form.cost);
+  async function createOrder(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setSaving(true);
+    setError('');
+    setNotice('');
 
-  if (
-    !form.customer.trim() ||
-    !form.address.trim() ||
-    !form.phone.trim() ||
-    !form.product.trim()
-  ) {
-    setError('Please complete all customer and product details.');
-    setSaving(false);
-    return;
-  }
+    const qty = Number(form.quantity);
+    const unitRate = Number(form.rate);
+    const delivery = Number(form.deliveryCharge);
+    const total = qty * unitRate + delivery;
+    const online = onlinePayment;
+    const cod = codAmount;
+    const orderCost = Number(form.cost);
 
-  if (
-    qty <= 0 ||
-    unitRate <= 0 ||
-    delivery < 0 ||
-    orderCost < 0 ||
-    total <= 0
-  ) {
-    setError('Please enter valid quantity, rate, delivery charge and cost.');
-    setSaving(false);
-    return;
-  }
-
-  if (
-    form.paymentOption === 'Both' &&
-    (online <= 0 || online >= total)
-  ) {
-    setError('For Both payment, online payment must be greater than zero and less than the total order amount.');
-    setSaving(false);
-    return;
-  }
-
-  const payload = {
-    customer_name: form.customer.trim(),
-    customer_phone: form.phone.trim(),
-    customer_address: form.address.trim(),
-    product_name: form.product.trim(),
-    quantity: qty,
-    rate: unitRate,
-    delivery_charge: delivery,
-    total_order: total,
-    online_payment: online,
-    cod_amount: cod,
-    delivery_type: form.deliveryType,
-    cost: orderCost,
-    profit: total - orderCost - delivery,
-    status: 'New',
-    payment_status: paymentStatus,
-  };
-
-  try {
-    const response = await fetch('/api/orders', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    const result = await response.json().catch(() => null);
-
-    if (!response.ok) {
-      throw new Error(
-        result?.detail || result?.message || 'Could not create order.'
-      );
+    if (
+      !form.customer.trim() ||
+      !form.address.trim() ||
+      !form.phone.trim() ||
+      !form.product.trim()
+    ) {
+      setError('Please complete all customer and product details.');
+      setSaving(false);
+      return;
     }
 
-    await loadOrders();
+    if (
+      qty <= 0 ||
+      unitRate <= 0 ||
+      delivery < 0 ||
+      orderCost < 0 ||
+      total <= 0
+    ) {
+      setError('Please enter valid quantity, rate, delivery charge and cost.');
+      setSaving(false);
+      return;
+    }
 
-    setActiveTab('All');
-    setQuery('');
+    if (
+      form.paymentOption === 'Both' &&
+      (online <= 0 || online >= total)
+    ) {
+      setError('For Both payment, online payment must be greater than zero and less than the total order amount.');
+      setSaving(false);
+      return;
+    }
 
-    setForm({
-      customer: '',
-      address: '',
-      phone: '',
-      product: '',
-      quantity: '1',
-      rate: '',
-      deliveryCharge: '0',
-      paymentOption: 'COD',
-      onlinePayment: '0',
-      deliveryType: 'Branch-Door',
-      cost: '0',
-    });
+    const payload = {
+      customer_name: form.customer.trim(),
+      customer_phone: form.phone.trim(),
+      customer_address: form.address.trim(),
+      product_name: form.product.trim(),
+      quantity: qty,
+      rate: unitRate,
+      delivery_charge: delivery,
+      total_order: total,
+      online_payment: online,
+      cod_amount: cod,
+      delivery_type: form.deliveryType,
+      cost: orderCost,
+      profit: total - orderCost - delivery,
+      status: 'New',
+      payment_status: paymentStatus,
+    };
 
-    setShowCreate(false);
-    setNotice('Order created successfully.');
-  } catch (err) {
-    setError(
-      err instanceof Error ? err.message : 'Could not create order.'
-    );
-  } finally {
-    setSaving(false);
+    try {
+      const response = await fetch('/api/orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      const result = await response.json().catch(() => null);
+
+      if (!response.ok) {
+        throw new Error(
+          result?.detail || result?.message || 'Could not create order.'
+        );
+      }
+
+      await loadOrders();
+
+      setActiveTab('All');
+      setQuery('');
+
+      setForm({
+        customer: '',
+        address: '',
+        phone: '',
+        product: '',
+        quantity: '1',
+        rate: '',
+        deliveryCharge: '0',
+        paymentOption: 'COD',
+        onlinePayment: '0',
+        deliveryType: 'Branch-Door',
+        cost: '0',
+      });
+
+      setShowCreate(false);
+      setNotice('Order created successfully.');
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Could not create order.'
+      );
+    } finally {
+      setSaving(false);
+    }
   }
-}
 
 
   async function updateOrderStatus(order: Order, status: OrderStatus) {
@@ -733,11 +736,10 @@ async function createOrder(event: FormEvent<HTMLFormElement>) {
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`shrink-0 rounded-lg px-3 py-2 text-[10px] font-medium transition ${
-                  activeTab === tab
+                className={`shrink-0 rounded-lg px-3 py-2 text-[10px] font-medium transition ${activeTab === tab
                     ? 'bg-violet-500/15 text-violet-200'
                     : 'text-slate-500 hover:bg-white/5 hover:text-white'
-                }`}
+                  }`}
               >
                 {tab}
                 {tab === 'All' && (
@@ -850,7 +852,7 @@ async function createOrder(event: FormEvent<HTMLFormElement>) {
         </section>
       </div>
 
-      
+
       {/* Create order modal */}
       {showCreate && (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/75 p-4 backdrop-blur-sm">
@@ -1018,11 +1020,10 @@ async function createOrder(event: FormEvent<HTMLFormElement>) {
                       key={option}
                       type="button"
                       onClick={() => setForm(p => ({ ...p, paymentOption: option }))}
-                      className={`rounded-lg border px-3 py-2.5 text-xs font-medium transition ${
-                        form.paymentOption === option
+                      className={`rounded-lg border px-3 py-2.5 text-xs font-medium transition ${form.paymentOption === option
                           ? 'border-violet-400 bg-violet-500/15 text-violet-200'
                           : 'border-line text-slate-400 hover:text-white'
-                      }`}
+                        }`}
                     >
                       {option}
                     </button>
@@ -1246,16 +1247,15 @@ async function createOrder(event: FormEvent<HTMLFormElement>) {
                   <div
                     className="h-full rounded-full bg-emerald-400 transition-all"
                     style={{
-                      width: `${
-                        selectedOrder.codAmount > 0
+                      width: `${selectedOrder.codAmount > 0
                           ? Math.min(
-                              100,
-                              (selectedOrder.codSettledAmount /
-                                selectedOrder.codAmount) *
-                                100
-                            )
+                            100,
+                            (selectedOrder.codSettledAmount /
+                              selectedOrder.codAmount) *
+                            100
+                          )
                           : 0
-                      }%`,
+                        }%`,
                     }}
                   />
                 </div>
@@ -1266,7 +1266,7 @@ async function createOrder(event: FormEvent<HTMLFormElement>) {
                     Math.max(
                       0,
                       selectedOrder.codAmount -
-                        selectedOrder.codSettledAmount
+                      selectedOrder.codSettledAmount
                     )
                   )}
                 </p>
@@ -1358,10 +1358,10 @@ async function createOrder(event: FormEvent<HTMLFormElement>) {
                     onChange={(event) =>
                       setPaymentMethod(
                         event.target.value as
-                          | 'COD'
-                          | 'Cash'
-                          | 'Bank Transfer'
-                          | 'Other'
+                        | 'COD'
+                        | 'Cash'
+                        | 'Bank Transfer'
+                        | 'Other'
                       )
                     }
                     className="w-full rounded-xl border border-line bg-canvas px-3 py-3 text-xs text-white outline-none focus:border-violet-400"
@@ -1435,8 +1435,11 @@ async function createOrder(event: FormEvent<HTMLFormElement>) {
                       'Design Approval',
                       'In Production',
                       'Ready to Ship',
+                      'Shipped',
+                      'Delivered',
                       'Completed',
                       'Cancelled',
+                      'Returned',
                     ].map((status) => (
                       <option key={status} value={status}>
                         {status}
