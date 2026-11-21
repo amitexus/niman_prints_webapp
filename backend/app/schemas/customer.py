@@ -31,6 +31,9 @@ class CustomerResponse(BaseModel):
     type: CustomerType = "Individual"
     total_orders: int = 0
     total_spent: float = 0
+    completed_orders: int = 0
+    cancelled_orders: int = 0
+    returned_orders: int = 0
     last_order: Optional[datetime] = None
     notes: str = ""
     is_active: bool = True

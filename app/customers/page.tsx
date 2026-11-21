@@ -23,6 +23,9 @@ type ApiCustomer = {
   type: CustomerType;
   total_orders: number;
   total_spent: number;
+  completed_orders: number;
+  cancelled_orders: number;
+  returned_orders: number;
   last_order: string | null;
   notes: string;
   is_active: boolean;
@@ -79,6 +82,9 @@ function mapCustomer(customer: ApiCustomer): Customer {
     type: customer.type,
     totalOrders: customer.total_orders,
     totalSpent: customer.total_spent,
+    completedOrders: customer.completed_orders ?? 0,
+    cancelledOrders: customer.cancelled_orders ?? 0,
+    returnedOrders: customer.returned_orders ?? 0,
     lastOrder: customer.last_order
       ? new Date(customer.last_order).toLocaleDateString('en-GB', {
         day: '2-digit',
@@ -811,6 +817,33 @@ export default function CustomersPage() {
               })}
             </div>
 
+            {/* Purchase Summary */}
+            <div className="mt-5 grid grid-cols-3 gap-2">
+              <div className="rounded-xl border border-emerald-400/15 bg-emerald-400/5 p-3">
+                <p className="text-[9px] text-emerald-300">Completed</p>
+                <p className="mt-2 text-xl font-bold text-white">
+                  {selectedCustomer.completedOrders ?? 0}
+                </p>
+                <p className="mt-1 text-[9px] text-slate-500">Orders</p>
+              </div>
+
+              <div className="rounded-xl border border-rose-400/15 bg-rose-400/5 p-3">
+                <p className="text-[9px] text-rose-300">Cancelled</p>
+                <p className="mt-2 text-xl font-bold text-white">
+                  {selectedCustomer.cancelledOrders ?? 0}
+                </p>
+                <p className="mt-1 text-[9px] text-slate-500">Orders</p>
+              </div>
+
+              <div className="rounded-xl border border-orange-400/15 bg-orange-400/5 p-3">
+                <p className="text-[9px] text-orange-300">Returned</p>
+                <p className="mt-2 text-xl font-bold text-white">
+                  {selectedCustomer.returnedOrders ?? 0}
+                </p>
+                <p className="mt-1 text-[9px] text-slate-500">Orders</p>
+              </div>
+            </div>
+
             {/* Purchase History */}
             <div className="mt-6 border-t border-line pt-5">
               <div className="mb-3 flex items-center justify-between">
@@ -907,7 +940,7 @@ export default function CustomersPage() {
               </button>
             </div>
           </div>
-        
+
         </div>
       )}
 

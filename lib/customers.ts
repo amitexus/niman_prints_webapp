@@ -10,6 +10,9 @@ export type Customer = {
   type: CustomerType;
   totalOrders: number;
   totalSpent: number;
+  completedOrders?: number;
+  cancelledOrders?: number;
+  returnedOrders?: number;
   lastOrder: string;
   notes: string;
 };
