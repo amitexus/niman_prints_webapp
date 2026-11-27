@@ -73,14 +73,32 @@ def initialize_database(db: Database):
     ),
 ],
         "production_jobs": [
-            ([("business_id", ASCENDING), ("status", ASCENDING)], {}),
+           # Filter production jobs by status
+           ([("business_id", ASCENDING), ("status", ASCENDING)], {}),
+
+           # Prevent more than one production job for the same order
+           (
+              [("business_id", ASCENDING), ("order_id", ASCENDING)],
+              {
+                 "unique": True,
+                 "partialFilterExpression": {
+                   "order_id": {"$type": "objectId"}
+                  },
+              },
+           ),
+
+           # Find jobs by their production deadline
+           ([("business_id", ASCENDING), ("due_date", ASCENDING)], {}),
+
+           # Find jobs assigned to a particular employee
+           ([("business_id", ASCENDING), ("assigned_to", ASCENDING)], {}),
         ],
         "inventory": [
             ([("business_id", ASCENDING), ("sku", ASCENDING)],
              {"unique": True, "sparse": True}),
         ],
         "stock_movements": [
-            ([("business_id", ASCENDING), ("created_at", DESCENDING)], {}),
+            ([("business_id", ASCENDING), ("date", DESCENDING)], {}),
         ],
         "suppliers": [
             ([("business_id", ASCENDING), ("name", ASCENDING)], {}),

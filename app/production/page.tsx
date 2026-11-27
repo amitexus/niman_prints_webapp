@@ -1,19 +1,31 @@
 
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Search, Plus, X, Eye, Clock3, CheckCircle2, Factory,
-  PackageCheck, AlertTriangle, ClipboardList, 
+  PackageCheck, AlertTriangle, ClipboardList,
 } from 'lucide-react';
 
 import {
-  initialProductionJobs,
   productionStages,
+  mapProductionJob,
   type ProductionJob,
   type ProductionStatus,
   type ProductionPriority,
+  type ProductionApiJob,
+  type BackendProductionStatus,
 } from '@/lib/production';
+
+type ProductionOrder = {
+  id: string;
+  order_number: string;
+  customer_id: string | null;
+  customer_name: string;
+  product_name: string;
+  quantity: number;
+  status: string;
+};
 
 const statusStyles: Record<ProductionStatus, string> = {
   'Design Pending': 'bg-amber-400/10 text-amber-300',
@@ -25,7 +37,8 @@ const statusStyles: Record<ProductionStatus, string> = {
 };
 
 const priorityStyles: Record<ProductionPriority, string> = {
-  Normal: 'text-slate-400',
+  Low: "text-slate-600",
+  Normal: 'text-blue-400',
   High: 'text-amber-300',
   Urgent: 'text-rose-300',
 };
@@ -42,22 +55,97 @@ const emptyForm = {
   notes: '',
 };
 
+
 function formatDate(date: string) {
   if (!date) return 'Not set';
 
-  return new Date(`${date}T00:00:00`).toLocaleDateString('en-IN', {
+  const parsedDate = new Date(date);
+
+  if (Number.isNaN(parsedDate.getTime())) return 'Not set';
+
+  return parsedDate.toLocaleDateString('en-IN', {
     day: '2-digit',
     month: 'short',
     year: 'numeric',
+    timeZone: 'Asia/Kathmandu',
   });
 }
 
+
+function formatProductionStatus(status: string | null) {
+  if (!status) return 'New Job';
+
+  const statusMap: Record<string, string> = {
+    'Pending Design': 'Design Pending',
+    'Design Approval': 'Design Approved',
+    'Printing': 'Printing',
+    'Quality Check': 'Quality Check',
+    'Packaging': 'Packaging',
+    'Ready for Dispatch': 'Ready to Ship',
+    'Completed': 'Dispatched',
+    'Cancelled': 'Cancelled',
+  };
+
+  return statusMap[status] || status;
+}
+
 export default function ProductionPage() {
-  const [jobs, setJobs] = useState(initialProductionJobs);
-  const [query, setQuery] = useState('');
+  const [jobs, setJobs] = useState<ProductionJob[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [apiError, setApiError] = useState(''); const [query, setQuery] = useState('');
+  const [orders, setOrders] = useState<ProductionOrder[]>([]);
+  useEffect(() => {
+    async function loadProductionJobs() {
+      try {
+        setIsLoading(true);
+        setApiError('');
+
+        const response = await fetch('/api/production');
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail || 'Failed to load production jobs.');
+        }
+
+        const apiJobs: ProductionApiJob[] = Array.isArray(data)
+          ? data
+          : data.items || data.jobs || [];
+
+        setJobs(apiJobs.map(mapProductionJob));
+      } catch (error) {
+        setApiError(
+          error instanceof Error
+            ? error.message
+            : 'Unable to load production jobs.'
+        );
+      } finally {
+        setIsLoading(false);
+      }
+    }
+
+    async function loadOrders() {
+      try {
+        const response = await fetch('/api/orders?limit=500');
+
+        if (!response.ok) {
+          throw new Error('Unable to load orders.');
+        }
+
+        const data: ProductionOrder[] = await response.json();
+        setOrders(data);
+      } catch (error) {
+        console.error('Production order loading error:', error);
+      }
+    }
+
+    loadOrders();
+    loadProductionJobs();
+  }, []);
   const [activeStatus, setActiveStatus] = useState('All');
   const [selectedJob, setSelectedJob] = useState<ProductionJob | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
+  const [editingJobId, setEditingJobId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
 
   const filteredJobs = useMemo(() => {
@@ -79,35 +167,173 @@ export default function ProductionPage() {
   const urgentJobs = activeJobs.filter(job => job.priority === 'Urgent');
   const readyJobs = jobs.filter(job => job.status === 'Ready to Ship');
 
-  function updateStatus(id: string, status: ProductionStatus) {
-    setJobs(previous =>
-      previous.map(job => job.id === id ? { ...job, status } : job)
+
+  async function updateStatus(id: string, status: ProductionStatus) {
+    const statusNote = window.prompt(
+      'Add a note for this production stage (optional):'
     );
-
-    setSelectedJob(previous =>
-      previous?.id === id ? { ...previous, status } : previous
-    );
-  }
-
-  function createJob(e: React.FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-
-    const newJob: ProductionJob = {
-      id: `JOB-${String(Date.now()).slice(-6)}`,
-      orderId: form.orderId.trim() || 'Not linked',
-      customer: form.customer.trim(),
-      product: form.product.trim(),
-      quantity: Math.max(1, Number(form.quantity)),
-      status: form.status,
-      priority: form.priority,
-      dueDate: form.dueDate,
-      assignedTo: form.assignedTo.trim() || 'Unassigned',
-      notes: form.notes.trim(),
+    if (statusNote === null) return;
+    const backendStatusMap: Record<ProductionStatus, string> = {
+      'Design Pending': 'Pending Design',
+      'Design Approved': 'Design Approval',
+      'Printing': 'Printing',
+      'Quality Check': 'Quality Check',
+      'Ready to Ship': 'Ready for Dispatch',
+      'Dispatched': 'Completed',
     };
 
-    setJobs(previous => [newJob, ...previous]);
-    setModalOpen(false);
-    setForm(emptyForm);
+    try {
+      setApiError('');
+
+      const response = await fetch(`/api/production/${id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          status: backendStatusMap[status],
+          status_note: statusNote,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Could not update production stage.');
+      }
+
+      const jobsResponse = await fetch('/api/production');
+
+      if (!jobsResponse.ok) {
+        throw new Error('Stage saved, but production history could not be refreshed.');
+      }
+
+      const data: ProductionApiJob[] = await jobsResponse.json();
+      const updatedJobs = data.map(mapProductionJob);
+
+      setJobs(updatedJobs);
+
+      const updatedJob = updatedJobs.find(job => job.id === id);
+
+      if (updatedJob) {
+        setSelectedJob(updatedJob);
+      }
+    } catch (error) {
+      setApiError(
+        error instanceof Error ? error.message : 'Something went wrong.'
+      );
+    }
+  }
+
+  function startEditingJob(job: ProductionJob) {
+    setEditingJobId(job.id);
+
+    setForm({
+      orderId: '',
+      customer: job.customer,
+      product: job.product,
+      quantity: String(job.quantity),
+      status: job.status,
+      priority: job.priority,
+      dueDate: job.dueDate ? job.dueDate.slice(0, 10) : '',
+      assignedTo: job.assignedTo === 'Unassigned' ? '' : job.assignedTo,
+      notes: job.notes,
+    });
+
+    setSelectedJob(null);
+    setModalOpen(true);
+  }
+
+  async function createJob(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+
+    try {
+      setApiError('');
+
+      const statusMap: Record<ProductionStatus, BackendProductionStatus> = {
+        'Design Pending': 'Pending Design',
+        'Design Approved': 'Design Approval',
+        Printing: 'Printing',
+        'Quality Check': 'Quality Check',
+        'Ready to Ship': 'Ready for Dispatch',
+        Dispatched: 'Completed',
+      };
+
+      const isEditing = editingJobId !== null;
+
+      const response = await fetch(
+        isEditing
+          ? `/api/production/${editingJobId}`
+          : '/api/production',
+        {
+          method: isEditing ? 'PUT' : 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(
+            isEditing
+              ? {
+                  product_name: form.product.trim(),
+                  quantity: Math.max(1, Number(form.quantity)),
+                  status: statusMap[form.status],
+                  priority: form.priority,
+                  assigned_to: form.assignedTo.trim() || null,
+                  due_date: form.dueDate || null,
+                  production_notes: form.notes.trim(),
+                }
+              : {
+                  order_id: form.orderId.trim() || null,
+                  customer_name: form.customer.trim() || null,
+                  product_name: form.product.trim(),
+                  quantity: Math.max(1, Number(form.quantity)),
+                  status: statusMap[form.status],
+                  priority: form.priority,
+                  assigned_to: form.assignedTo.trim() || null,
+                  due_date: form.dueDate || null,
+                  design_instructions: '',
+                  production_notes: form.notes.trim(),
+                }
+          ),
+        }
+      );
+
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(
+          data.detail ||
+            (isEditing
+              ? 'Unable to update production job.'
+              : 'Unable to create production job.')
+        );
+      }
+
+      const jobsResponse = await fetch('/api/production');
+
+      if (!jobsResponse.ok) {
+        throw new Error(
+          isEditing
+            ? 'Job saved, but the production list could not be refreshed.'
+            : 'Job created, but the production list could not be refreshed.'
+        );
+      }
+
+      const jobsData = await jobsResponse.json();
+      const apiJobs: ProductionApiJob[] = Array.isArray(jobsData)
+        ? jobsData
+        : jobsData.items || jobsData.jobs || [];
+
+      setJobs(apiJobs.map(mapProductionJob));
+      setModalOpen(false);
+      setEditingJobId(null);
+      setForm(emptyForm);
+    } catch (error) {
+      setApiError(
+        error instanceof Error
+          ? error.message
+          : editingJobId
+            ? 'Unable to update production job.'
+            : 'Unable to create production job.'
+      );
+    }
   }
 
   const tabs = ['All', ...productionStages];
@@ -127,6 +353,7 @@ export default function ProductionPage() {
 
         <button
           onClick={() => {
+            setEditingJobId(null);
             setForm(emptyForm);
             setModalOpen(true);
           }}
@@ -151,15 +378,25 @@ export default function ProductionPage() {
           </p>
         </div>
 
-        {/* Demo notice */}
-        <div className="rounded-xl border border-amber-400/15 bg-amber-400/[.05] px-4 py-3">
-          <p className="text-[11px] font-semibold text-amber-100">
-            Preview mode · Sample production jobs
-          </p>
-          <p className="mt-1 text-[10px] text-amber-100/55">
-            Changes are temporary and reset when this page is refreshed.
-          </p>
-        </div>
+        {/* API loading and error messages */}
+        {isLoading && (
+          <div className="rounded-xl border border-blue-400/15 bg-blue-400/[.05] px-4 py-3">
+            <p className="text-[11px] text-blue-200">
+              Loading production jobs...
+            </p>
+          </div>
+        )}
+
+        {apiError && (
+          <div className="rounded-xl border border-rose-400/15 bg-rose-400/[.05] px-4 py-3">
+            <p className="text-[11px] font-semibold text-rose-200">
+              Unable to load production jobs
+            </p>
+            <p className="mt-1 text-[10px] text-rose-200/70">
+              {apiError}
+            </p>
+          </div>
+        )}
 
         {/* KPI cards */}
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -230,11 +467,10 @@ export default function ProductionPage() {
                 <button
                   key={stage}
                   onClick={() => setActiveStatus(stage)}
-                  className={`rounded-xl border p-3 text-left transition ${
-                    activeStatus === stage
-                      ? 'border-violet-400/50 bg-violet-400/10'
-                      : 'border-line bg-canvas hover:border-slate-600'
-                  }`}
+                  className={`rounded-xl border p-3 text-left transition ${activeStatus === stage
+                    ? 'border-violet-400/50 bg-violet-400/10'
+                    : 'border-line bg-canvas hover:border-slate-600'
+                    }`}
                 >
                   <p className="text-[9px] leading-4 text-slate-400">
                     {stage}
@@ -421,14 +657,20 @@ export default function ProductionPage() {
             <div className="flex items-center justify-between border-b border-line p-5">
               <div>
                 <h3 className="text-sm font-semibold text-white">
-                  Create production job
+                  {editingJobId ? 'Edit production job' : 'Create production job'}
                 </h3>
                 <p className="mt-1 text-[10px] text-slate-500">
-                  Add an order to your production queue.
+                  {editingJobId
+                    ? 'Update the production job details.'
+                    : 'Add an order to your production queue.'}
                 </p>
               </div>
               <button
-                onClick={() => setModalOpen(false)}
+                onClick={() => {
+                  setModalOpen(false);
+                  setEditingJobId(null);
+                  setForm(emptyForm);
+                }}
                 className="rounded-lg p-2 text-slate-400 hover:bg-white/5"
               >
                 <X size={17} />
@@ -436,7 +678,49 @@ export default function ProductionPage() {
             </div>
 
             <form onSubmit={createJob} className="space-y-4 p-5">
+              {!editingJobId && (
+              <label className="block">
+                <span className="mb-2 block text-[10px] text-slate-400">
+                  Link an existing order (optional)
+                </span>
+
+                <select
+                  value={form.orderId}
+                  onChange={e => {
+                    const selectedOrder = orders.find(
+                      order => order.id === e.target.value
+                    );
+
+                    if (!selectedOrder) {
+                      setForm(p => ({
+                        ...p,
+                        orderId: '',
+                      }));
+                      return;
+                    }
+
+                    setForm(p => ({
+                      ...p,
+                      orderId: selectedOrder.id,
+                      customer: selectedOrder.customer_name,
+                      product: selectedOrder.product_name,
+                      quantity: String(selectedOrder.quantity),
+                    }));
+                  }}
+                  className="w-full rounded-xl border border-line bg-canvas px-3 py-3 text-xs text-white outline-none focus:border-violet-400"
+                >
+                  <option value="">Standalone job — no order linked</option>
+
+                  {orders.map(order => (
+                    <option key={order.id} value={order.id}>
+                      {order.order_number} — {order.customer_name} — {order.product_name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              )}
               <div className="grid gap-4 sm:grid-cols-2">
+                {!editingJobId && (
                 <label className="block">
                   <span className="mb-2 block text-[10px] text-slate-400">Order ID (optional)</span>
                   <input
@@ -446,11 +730,13 @@ export default function ProductionPage() {
                     className="w-full rounded-xl border border-line bg-canvas px-3 py-3 text-xs text-white outline-none focus:border-violet-400"
                   />
                 </label>
+                )}
 
                 <label className="block">
                   <span className="mb-2 block text-[10px] text-slate-400">Customer name</span>
                   <input
                     required
+                    readOnly={Boolean(editingJobId)}
                     value={form.customer}
                     onChange={e => setForm(p => ({ ...p, customer: e.target.value }))}
                     placeholder="Customer or company"
@@ -546,7 +832,11 @@ export default function ProductionPage() {
               <div className="flex justify-end gap-2 border-t border-line pt-4">
                 <button
                   type="button"
-                  onClick={() => setModalOpen(false)}
+                  onClick={() => {
+                    setModalOpen(false);
+                    setEditingJobId(null);
+                    setForm(emptyForm);
+                  }}
                   className="rounded-xl border border-line px-4 py-2.5 text-xs text-slate-400 hover:text-white"
                 >
                   Cancel
@@ -555,7 +845,7 @@ export default function ProductionPage() {
                   type="submit"
                   className="rounded-xl bg-violet-500 px-5 py-2.5 text-xs font-semibold text-white hover:bg-violet-400"
                 >
-                  Create job
+                  {editingJobId ? 'Save changes' : 'Create job'}
                 </button>
               </div>
             </form>
@@ -564,9 +854,10 @@ export default function ProductionPage() {
       )}
 
       {/* Production job details */}
+
       {selectedJob && (
         <div className="fixed inset-0 z-50 flex items-center justify-center overflow-y-auto bg-black/75 p-4 backdrop-blur-sm">
-          <div className="my-auto w-full max-w-md rounded-2xl border border-line bg-panel p-5 shadow-2xl">
+          <div className="my-auto w-full max-w-lg rounded-2xl border border-line bg-panel p-5 shadow-2xl">
             <div className="flex items-start justify-between">
               <div>
                 <p className="text-[10px] text-slate-500">
@@ -579,12 +870,20 @@ export default function ProductionPage() {
                   {selectedJob.orderId}
                 </p>
               </div>
-              <button
-                onClick={() => setSelectedJob(null)}
-                className="rounded-lg p-2 text-slate-400 hover:bg-white/5"
-              >
-                <X size={17} />
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => startEditingJob(selectedJob)}
+                  className="rounded-lg border border-violet-400/30 px-3 py-2 text-[10px] font-medium text-violet-300 hover:bg-violet-400/10"
+                >
+                  Edit job
+                </button>
+                <button
+                  onClick={() => setSelectedJob(null)}
+                  className="rounded-lg p-2 text-slate-400 hover:bg-white/5"
+                >
+                  <X size={17} />
+                </button>
+              </div>
             </div>
 
             <div className="mt-5 space-y-4">
@@ -603,19 +902,92 @@ export default function ProductionPage() {
               ))}
 
               <div>
-                <p className="mb-2 text-[9px] text-slate-500">Update production stage</p>
+                <p className="mb-2 text-[9px] text-slate-500">
+                  Update production stage
+                </p>
                 <select
                   value={selectedJob.status}
-                  onChange={e => updateStatus(
-                    selectedJob.id,
-                    e.target.value as ProductionStatus
-                  )}
+                  onChange={e =>
+                    updateStatus(
+                      selectedJob.id,
+                      e.target.value as ProductionStatus
+                    )
+                  }
                   className="w-full rounded-xl border border-line bg-canvas px-3 py-3 text-xs text-white outline-none"
                 >
                   {productionStages.map(stage => (
                     <option key={stage}>{stage}</option>
                   ))}
                 </select>
+              </div>
+
+              {/* Production History Timeline */}
+              <div className="border-t border-line pt-4">
+                <div className="mb-4 flex items-center justify-between">
+                  <h4 className="text-xs font-semibold text-white">
+                    Production History
+                  </h4>
+                  <span className="rounded-full bg-white/5 px-2 py-1 text-[9px] text-slate-400">
+                    {selectedJob.history.length} updates
+                  </span>
+                </div>
+
+                {selectedJob.history.length === 0 ? (
+                  <div className="rounded-xl border border-dashed border-line bg-canvas/50 px-4 py-6 text-center">
+                    <p className="text-xs text-slate-400">
+                      No production history yet
+                    </p>
+                    <p className="mt-1 text-[10px] text-slate-500">
+                      Status changes will appear here.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="max-h-64 space-y-4 overflow-y-auto pr-2">
+                    {[...selectedJob.history].reverse().map((entry, index) => (
+                      <div key={`${entry.changed_at}-${index}`} className="relative flex gap-3">
+                        <div className="flex flex-col items-center">
+                          <div className="mt-1 h-2.5 w-2.5 rounded-full border-2 border-amber-400 bg-amber-400/20" />
+                          {index !== selectedJob.history.length - 1 && (
+                            <div className="mt-1 w-px flex-1 bg-line" />
+                          )}
+                        </div>
+
+                        <div className="min-w-0 flex-1 pb-2">
+                          <p className="text-xs font-medium text-white">
+                            {entry.from_status
+                              ? `${formatProductionStatus(entry.from_status)} → ${formatProductionStatus(entry.to_status)}`
+                              : `Job created · ${formatProductionStatus(entry.to_status)}`}
+                          </p>
+
+                          <p className="mt-1 text-[10px] text-slate-500">
+                            {entry.changed_at
+                              ? new Date(entry.changed_at).toLocaleString('en-IN', {
+                                day: '2-digit',
+                                month: 'short',
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit',
+                                second: '2-digit',
+                                hour12: true,
+                                timeZone: 'Asia/Kathmandu',
+                              })
+                              : 'Date unavailable'}
+                          </p>
+
+                          <p className="mt-1 text-[10px] text-slate-400">
+                            Updated by: {entry.changed_by || 'System'}
+                          </p>
+
+                          {entry.notes && (
+                            <p className="mt-2 rounded-lg bg-canvas px-3 py-2 text-[10px] leading-relaxed text-slate-300">
+                              {entry.notes}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
@@ -628,6 +1000,7 @@ export default function ProductionPage() {
           </div>
         </div>
       )}
+
     </main>
   );
 }

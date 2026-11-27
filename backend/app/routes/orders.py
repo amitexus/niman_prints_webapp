@@ -137,7 +137,10 @@ def create_order(
 
     if customer_id:
         if not ObjectId.is_valid(customer_id):
-            raise HTTPException(status_code=400, detail="Invalid customer ID")
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid customer ID",
+            )
 
         customer = db.customers.find_one({
             "_id": ObjectId(customer_id),
@@ -145,7 +148,10 @@ def create_order(
         })
 
         if not customer:
-            raise HTTPException(status_code=404, detail="Customer not found")
+            raise HTTPException(
+                status_code=404,
+                detail="Customer not found",
+            )
 
     now = datetime.now(timezone.utc)
     document = data.model_dump()
@@ -155,7 +161,10 @@ def create_order(
     cod_amount = float(document.get("cod_amount", 0) or 0)
 
     if online_payment < 0 or cod_amount < 0:
-        raise HTTPException(status_code=400, detail="Payment amounts cannot be negative")
+        raise HTTPException(
+            status_code=400,
+            detail="Payment amounts cannot be negative",
+        )
 
     if online_payment + cod_amount > total_order + 0.01:
         raise HTTPException(
@@ -185,42 +194,55 @@ def create_order(
         "updated_at": now,
         "payment_history": payment_history,
         "cod_settled_amount": 0.0,
-        "payment_status": calculate_payment_status(total_order, total_received),
+        "payment_status": calculate_payment_status(
+            total_order,
+            total_received,
+        ),
         "delivery_status": "Pending",
-        "cod_settlement_status": calculate_cod_settlement_status(cod_amount, 0),
+        "cod_settlement_status": calculate_cod_settlement_status(
+            cod_amount,
+            0,
+        ),
     })
 
     if database.client is None:
         raise HTTPException(
-           status_code=503,
-           detail="Database connection is unavailable",
-    )
+            status_code=503,
+            detail="Database connection is unavailable",
+        )
 
     with database.client.start_session() as session:
-         with session.start_transaction():
+        with session.start_transaction():
 
             result = db.orders.insert_one(
                 document,
                 session=session,
-        )
+            )
 
-         if customer_id:
-            recalculate_customer_stats(
-                db=db,
-                business_id=business_id,
-                customer_id=customer_id,
+            if customer_id:
+                recalculate_customer_stats(
+                    db=db,
+                    business_id=business_id,
+                    customer_id=customer_id,
+                    session=session,
+                )
+
+            saved_order = db.orders.find_one(
+                {
+                    "_id": result.inserted_id,
+                    "business_id": business_id,
+                },
                 session=session,
             )
 
-            saved_order = db.orders.find_one(
-              {
-                 "_id": result.inserted_id,
-                 "business_id": business_id,
-             },
-            session=session,
+    if not saved_order:
+        raise HTTPException(
+            status_code=500,
+            detail="Order was created but could not be retrieved",
         )
 
     return serialize_order(saved_order)
+
 
 
 @router.get("", response_model=list[OrderResponse])
@@ -271,12 +293,15 @@ def get_order(
     return serialize_order(order)
 
 
+
 @router.put("/{order_id}", response_model=OrderResponse)
 def update_order(
     order_id: str,
     data: OrderUpdate,
     current_user: dict = Depends(get_current_user),
 ):
+    from app.services.production_service import create_production_job
+
     db = get_database()
     business_id = get_business_id(current_user)
 
@@ -287,7 +312,10 @@ def update_order(
 
     if customer_id:
         if not ObjectId.is_valid(customer_id):
-            raise HTTPException(status_code=400, detail="Invalid customer ID")
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid customer ID",
+            )
 
         customer = db.customers.find_one({
             "_id": ObjectId(customer_id),
@@ -295,7 +323,10 @@ def update_order(
         })
 
         if not customer:
-            raise HTTPException(status_code=404, detail="Customer not found")
+            raise HTTPException(
+                status_code=404,
+                detail="Customer not found",
+            )
 
     updated_document = data.model_dump()
 
@@ -304,7 +335,9 @@ def update_order(
 
     payment_history = get_payment_history(existing)
     total_received = get_total_received(payment_history)
-    cod_settled_amount = float(existing.get("cod_settled_amount", 0) or 0)
+    cod_settled_amount = float(
+        existing.get("cod_settled_amount", 0) or 0
+    )
 
     if total_received > total_order + 0.01:
         raise HTTPException(
@@ -327,7 +360,10 @@ def update_order(
         "updated_at": datetime.now(timezone.utc),
         "payment_history": payment_history,
         "cod_settled_amount": cod_settled_amount,
-        "payment_status": calculate_payment_status(total_order, total_received),
+        "payment_status": calculate_payment_status(
+            total_order,
+            total_received,
+        ),
         "delivery_status": existing.get("delivery_status", "Pending"),
         "cod_settlement_status": calculate_cod_settlement_status(
             cod_amount,
@@ -340,41 +376,101 @@ def update_order(
 
     if database.client is None:
         raise HTTPException(
-          status_code=503,
-          detail="Database connection is unavailable",
+            status_code=503,
+            detail="Database connection is unavailable",
         )
 
     old_customer_id = existing.get("customer_id")
     new_customer_id = updated_document.get("customer_id")
 
+    order_status = updated_document.get("status")
+
     with database.client.start_session() as session:
         with session.start_transaction():
 
             db.orders.update_one(
-               {
-                 "_id": ObjectId(order_id),
-                 "business_id": business_id,
-               },
-            {"$set": updated_document},
-            session=session,
-            )
-
-        customer_ids = {
-            customer_id
-            for customer_id in (old_customer_id, new_customer_id)
-            if customer_id
-        }
-
-        for customer_id in customer_ids:
-            recalculate_customer_stats(
-                db=db,
-                business_id=business_id,
-                customer_id=customer_id,
+                {
+                    "_id": ObjectId(order_id),
+                    "business_id": business_id,
+                },
+                {"$set": updated_document},
                 session=session,
             )
 
+            # Create a production job when the order is confirmed.
+            if order_status in ["Design Approval", "In Production"]:
+
+                existing_job = db.production_jobs.find_one(
+                    {
+                        "business_id": business_id,
+                        "order_id": ObjectId(order_id),
+                    },
+                    session=session,
+                )
+
+                if not existing_job:
+                    production_status = (
+                        "Printing"
+                        if order_status == "In Production"
+                        else "Design Approval"
+                    )
+
+                    create_production_job(
+                        db=db,
+                        business_id=business_id,
+                        data={
+                            "order_id": order_id,
+                            "product_name": updated_document["product_name"],
+                            "quantity": updated_document["quantity"],
+                            "priority": "Normal",
+                            "status": production_status,
+                            "assigned_to": None,
+                            "due_date": None,
+                            "design_instructions": "",
+                            "production_notes": "Automatically created from customer order",
+                        },
+                        session=session,
+                    )
+
+                elif order_status == "In Production":
+                    # Advance an existing job without overwriting
+                    # jobs that are already further along.
+                    if existing_job.get("status") in [
+                        "Pending Design",
+                        "Design Approval",
+                    ]:
+                        db.production_jobs.update_one(
+                            {
+                                "_id": existing_job["_id"],
+                                "business_id": business_id,
+                            },
+                            {
+                                "$set": {
+                                    "status": "Printing",
+                                    "updated_at": datetime.now(timezone.utc),
+                                }
+                            },
+                            session=session,
+                        )
+
+            customer_ids = {
+                cid
+                for cid in (old_customer_id, new_customer_id)
+                if cid
+            }
+
+            for cid in customer_ids:
+                recalculate_customer_stats(
+                    db=db,
+                    business_id=business_id,
+                    customer_id=cid,
+                    session=session,
+                )
+
     updated_order = find_order(db, order_id, business_id)
+
     return serialize_order(updated_order)
+
 
 
 @router.patch("/{order_id}/delivery-status", response_model=OrderResponse)

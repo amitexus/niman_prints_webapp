@@ -7,7 +7,7 @@ export type ProductionStatus =
   | 'Ready to Ship'
   | 'Dispatched';
 
-export type ProductionPriority = 'Normal' | 'High' | 'Urgent';
+export type ProductionPriority = 'Low' | 'Normal' | 'High' | 'Urgent';
 
 export type ProductionJob = {
   id: string;
@@ -20,8 +20,8 @@ export type ProductionJob = {
   dueDate: string;
   assignedTo: string;
   notes: string;
+  history: ProductionHistoryEntry[];
 };
-
 export const productionStages: ProductionStatus[] = [
   'Design Pending',
   'Design Approved',
@@ -43,6 +43,7 @@ export const initialProductionJobs: ProductionJob[] = [
     dueDate: '2026-11-10',
     assignedTo: 'Production Team',
     notes: 'Print customer-approved name and design.',
+    history: [],
   },
   {
     id: 'JOB-002',
@@ -55,6 +56,7 @@ export const initialProductionJobs: ProductionJob[] = [
     dueDate: '2026-11-10',
     assignedTo: 'Design Team',
     notes: 'Waiting for customer design approval.',
+    history: [],
   },
   {
     id: 'JOB-003',
@@ -67,6 +69,7 @@ export const initialProductionJobs: ProductionJob[] = [
     dueDate: '2026-11-09',
     assignedTo: 'Production Team',
     notes: 'Check logo alignment and packaging.',
+    history: [],
   },
   {
     id: 'JOB-004',
@@ -79,6 +82,7 @@ export const initialProductionJobs: ProductionJob[] = [
     dueDate: '2026-11-11',
     assignedTo: 'Packing Team',
     notes: 'Verify all photos before dispatch.',
+    history: [],
   },
   {
     id: 'JOB-005',
@@ -91,6 +95,7 @@ export const initialProductionJobs: ProductionJob[] = [
     dueDate: '2026-11-10',
     assignedTo: 'Production Team',
     notes: 'Five bottles with individual names.',
+    history: [],
   },
   {
     id: 'JOB-006',
@@ -103,5 +108,79 @@ export const initialProductionJobs: ProductionJob[] = [
     dueDate: '2026-11-08',
     assignedTo: 'Packing Team',
     notes: 'Completed and dispatched.',
+    history: [],
   },
 ];
+
+// Backend production API types
+
+export type BackendProductionStatus =
+  | "Pending Design"
+  | "Design Approval"
+  | "Printing"
+  | "Quality Check"
+  | "Packaging"
+  | "Ready for Dispatch"
+  | "Completed"
+  | "Cancelled";
+
+export type BackendProductionPriority =
+  | "Low"
+  | "Normal"
+  | "High"
+  | "Urgent";
+
+export type ProductionHistoryEntry = {
+  from_status: string | null;
+  to_status: string;
+  changed_by: string;
+  notes: string;
+  changed_at: string;
+};
+
+export type ProductionApiJob = {
+  id: string;
+  business_id: string;
+  order_id: string | null;
+  order_number: string | null;
+  customer_name: string | null;
+  product_name: string;
+  quantity: number;
+  priority: BackendProductionPriority;
+  status: BackendProductionStatus;
+  assigned_to: string | null;
+  due_date: string | null;
+  design_instructions: string;
+  production_notes: string;
+  created_at: string;
+  updated_at: string;
+  history: ProductionHistoryEntry[];
+};
+
+
+export function mapProductionJob(job: ProductionApiJob): ProductionJob {
+  const statusMap: Record<BackendProductionStatus, ProductionStatus> = {
+    "Pending Design": "Design Pending",
+    "Design Approval": "Design Approved",
+    "Printing": "Printing",
+    "Quality Check": "Quality Check",
+    "Packaging": "Quality Check",
+    "Ready for Dispatch": "Ready to Ship",
+    "Completed": "Dispatched",
+    "Cancelled": "Dispatched",
+  };
+
+  return {
+    id: job.id,
+    orderId: job.order_number || "Not linked",
+    customer: job.customer_name || "Customer details unavailable",
+    product: job.product_name,
+    quantity: job.quantity,
+    status: statusMap[job.status],
+    priority: job.priority === "Urgent" ? "Urgent" : job.priority,
+    dueDate: job.due_date || "",
+    assignedTo: job.assigned_to || "Unassigned",
+    notes: job.production_notes || job.design_instructions || "",
+    history: job.history || [],
+  };
+}

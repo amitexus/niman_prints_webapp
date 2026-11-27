@@ -1,7 +1,7 @@
 
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Search, Plus, X, Package, AlertTriangle, TrendingUp,
   Boxes, ArrowDownToLine, ArrowUpFromLine, History,
@@ -9,8 +9,6 @@ import {
 } from 'lucide-react';
 
 import {
-  initialInventory,
-  initialMovements,
   type InventoryItem,
   type InventoryCategory,
   type StockMovement,
@@ -44,8 +42,71 @@ const movementStyles = {
 };
 
 export default function InventoryPage() {
-  const [items, setItems] = useState(initialInventory);
-  const [movements, setMovements] = useState(initialMovements);
+  const [items, setItems] = useState<InventoryItem[]>([]);
+  const [movements, setMovements] = useState<StockMovement[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadInventory() {
+      try {
+        setLoading(true);
+        setError('');
+
+        const [itemsResponse, movementsResponse] = await Promise.all([
+          fetch('/api/inventory', { cache: 'no-store' }),
+          fetch('/api/inventory/movements', { cache: 'no-store' }),
+        ]);
+
+        const itemsData = await itemsResponse.json();
+        const movementsData = await movementsResponse.json();
+
+        if (!itemsResponse.ok) {
+          throw new Error(itemsData?.detail || 'Unable to load inventory.');
+        }
+
+        if (!movementsResponse.ok) {
+          throw new Error(movementsData?.detail || 'Unable to load stock history.');
+        }
+
+        setItems(
+          itemsData.map((item: any) => ({
+            id: item.id,
+            name: item.name,
+            sku: item.sku,
+            category: item.category,
+            unit: item.unit,
+            stock: item.stock,
+            lowStockAt: item.low_stock_at,
+            costPerUnit: item.cost_per_unit,
+            supplier: item.supplier,
+          }))
+        );
+
+        setMovements(
+          movementsData.map((movement: any) => ({
+            id: movement.id,
+            itemId: movement.item_id,
+            itemName: movement.item_name,
+            type: movement.type,
+            quantity: movement.quantity,
+            date: new Date(movement.date).toLocaleString(),
+            reference: movement.reference,
+          }))
+        );
+      } catch (err) {
+        setError(
+          err instanceof Error ? err.message : 'Unable to load inventory.'
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadInventory();
+  }, []);
+
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
   const [query, setQuery] = useState('');
   const [activeCategory, setActiveCategory] = useState('All');
   const [modalOpen, setModalOpen] = useState(false);
@@ -110,7 +171,8 @@ export default function InventoryPage() {
     setModalOpen(true);
   }
 
-  function saveItem(e: React.FormEvent<HTMLFormElement>) {
+
+  async function saveItem(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     const stock = Number(form.stock);
@@ -140,36 +202,126 @@ export default function InventoryPage() {
       return;
     }
 
-    const updated: InventoryItem = {
-      id: editingId ?? `INV-${Date.now()}`,
+    const payload = {
       name: form.name.trim(),
       sku: form.sku.trim(),
       category: form.category,
       unit: form.unit.trim() || 'pcs',
-      stock,
-      lowStockAt: threshold,
-      costPerUnit: cost,
+      low_stock_at: threshold,
+      cost_per_unit: cost,
       supplier: form.supplier.trim(),
+      ...(!editingId ? { stock } : {}),
     };
 
-    if (editingId) {
-      setItems(previous =>
-        previous.map(item => item.id === editingId ? updated : item)
-      );
-    } else {
-      setItems(previous => [updated, ...previous]);
-    }
+    try {
+      setSaving(true);
+      setError('');
 
-    setModalOpen(false);
-    setEditingId(null);
-    setForm(emptyForm);
+      const response = await fetch(
+        editingId ? `/api/inventory/${editingId}` : '/api/inventory',
+        {
+          method: editingId ? 'PUT' : 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result?.detail || 'Unable to save inventory item.');
+      }
+
+      const refreshResponse = await fetch('/api/inventory', {
+        cache: 'no-store',
+      });
+
+      const refreshedItems = await refreshResponse.json();
+
+      if (!refreshResponse.ok) {
+        throw new Error('Item saved, but refreshing inventory failed.');
+      }
+
+      setItems(
+        refreshedItems.map((item: any) => ({
+          id: item.id,
+          name: item.name,
+          sku: item.sku,
+          category: item.category,
+          unit: item.unit,
+          stock: item.stock,
+          lowStockAt: item.low_stock_at,
+          costPerUnit: item.cost_per_unit,
+          supplier: item.supplier,
+        }))
+      );
+
+      setModalOpen(false);
+      setEditingId(null);
+      setForm(emptyForm);
+
+      alert(editingId ? 'Inventory item updated!' : 'Inventory item added!');
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Unable to save inventory item.'
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function deleteItem(id: string) {
-    if (!window.confirm('Delete this inventory item?')) return;
 
-    setItems(previous => previous.filter(item => item.id !== id));
-    setSelectedItem(null);
+
+  async function deleteItem(id: string) {
+    if (!window.confirm('Archive this inventory item?')) return;
+
+    try {
+      setSaving(true);
+      setError('');
+
+      const response = await fetch(`/api/inventory/${id}`, {
+        method: 'DELETE',
+      });
+
+      const result = await response.json();
+
+      if (!response.ok) {
+        throw new Error(result?.detail || 'Unable to archive inventory item.');
+      }
+
+      const refreshResponse = await fetch('/api/inventory', {
+        cache: 'no-store',
+      });
+
+      const refreshedItems = await refreshResponse.json();
+
+      if (!refreshResponse.ok) {
+        throw new Error('Item archived, but refreshing inventory failed.');
+      }
+
+      setItems(
+        refreshedItems.map((item: any) => ({
+          id: item.id,
+          name: item.name,
+          sku: item.sku,
+          category: item.category,
+          unit: item.unit,
+          stock: item.stock,
+          lowStockAt: item.low_stock_at,
+          costPerUnit: item.cost_per_unit,
+          supplier: item.supplier,
+        }))
+      );
+
+      setSelectedItem(null);
+      alert('Inventory item archived successfully!');
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Unable to archive inventory item.'
+      );
+    } finally {
+      setSaving(false);
+    }
   }
 
   function openMovement(item?: InventoryItem) {
@@ -182,50 +334,96 @@ export default function InventoryPage() {
     setMovementOpen(true);
   }
 
-  function saveMovement(e: React.FormEvent<HTMLFormElement>) {
+
+  async function saveMovement(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
     const quantity = Number(movementForm.quantity);
-    const item = items.find(i => i.id === movementForm.itemId);
+    const item = items.find((i) => i.id === movementForm.itemId);
 
     if (!item || !Number.isInteger(quantity) || quantity <= 0) {
-      alert('Select an item and enter a valid whole-number quantity.');
+      alert('Please select an item and enter a valid quantity.');
       return;
     }
 
-    let newStock = item.stock;
-
-    if (movementForm.type === 'Stock In') {
-      newStock += quantity;
-    } else if (movementForm.type === 'Stock Out') {
-      if (quantity > item.stock) {
-        alert('Insufficient stock for this stock-out movement.');
-        return;
-      }
-      newStock -= quantity;
-    } else {
-      newStock = quantity;
+    if (movementForm.type === 'Stock Out' && quantity > item.stock) {
+      alert('Insufficient stock. Available quantity: ' + item.stock);
+      return;
     }
 
-    const updatedMovement: StockMovement = {
-      id: `MOV-${Date.now()}`,
-      itemId: item.id,
-      itemName: item.name,
-      type: movementForm.type,
-      quantity,
-      date: new Date().toISOString().slice(0, 10),
-      reference: movementForm.reference.trim() || 'Manual entry',
-    };
+    try {
+      setSaving(true);
+      setError('');
 
-    setItems(previous =>
-      previous.map(i =>
-        i.id === item.id ? { ...i, stock: newStock } : i
-      )
-    );
+      const response = await fetch('/api/inventory/movements', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          item_id: movementForm.itemId,
+          type: movementForm.type,
+          quantity,
+          reference: movementForm.reference.trim() || 'Manual entry',
+        }),
+      });
 
-    setMovements(previous => [updatedMovement, ...previous]);
-    setMovementOpen(false);
+      const data = await response.json();
+
+      if (!response.ok) {
+        throw new Error(data?.detail || 'Unable to save stock movement.');
+      }
+
+      // Refresh inventory and movement history from the backend.
+      const [itemsResponse, movementsResponse] = await Promise.all([
+        fetch('/api/inventory', { cache: 'no-store' }),
+        fetch('/api/inventory/movements', { cache: 'no-store' }),
+      ]);
+
+      const itemsData = await itemsResponse.json();
+      const movementsData = await movementsResponse.json();
+
+      if (!itemsResponse.ok || !movementsResponse.ok) {
+        throw new Error('Movement saved, but refreshing inventory failed. Please reload the page.');
+      }
+
+      setItems(
+        itemsData.map((item: any) => ({
+          id: item.id,
+          name: item.name,
+          sku: item.sku,
+          category: item.category,
+          unit: item.unit,
+          stock: item.stock,
+          lowStockAt: item.low_stock_at,
+          costPerUnit: item.cost_per_unit,
+          supplier: item.supplier,
+        }))
+      );
+
+      setMovements(
+        movementsData.map((movement: any) => ({
+          id: movement.id,
+          itemId: movement.item_id,
+          itemName: movement.item_name,
+          type: movement.type,
+          quantity: movement.quantity,
+          date: new Date(movement.date).toLocaleString(),
+          reference: movement.reference,
+        }))
+      );
+
+      setMovementOpen(false);
+      alert('Stock movement saved successfully!');
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : 'Unable to save stock movement.'
+      );
+    } finally {
+      setSaving(false);
+    }
   }
+
 
   return (
     <main className="min-w-0 flex-1">
@@ -260,6 +458,17 @@ export default function InventoryPage() {
       </header>
 
       <div className="mx-auto max-w-[1500px] space-y-6 p-5 md:p-8">
+        {loading && (
+          <div className="rounded-xl border border-line bg-panel px-4 py-3 text-xs text-slate-400">
+            Loading inventory...
+          </div>
+        )}
+
+        {error && (
+          <div className="rounded-xl border border-rose-400/20 bg-rose-400/5 px-4 py-3 text-xs text-rose-300">
+            {error}
+          </div>
+        )}
         {/* Intro */}
         <div>
           <p className="text-[10px] font-semibold uppercase tracking-[.15em] text-violet-300">
@@ -273,15 +482,6 @@ export default function InventoryPage() {
           </p>
         </div>
 
-        {/* Demo notice */}
-        <div className="rounded-xl border border-amber-400/15 bg-amber-400/[.05] px-4 py-3">
-          <p className="text-[11px] font-semibold text-amber-100">
-            Preview mode · Sample inventory data
-          </p>
-          <p className="mt-1 text-[10px] text-amber-100/55">
-            Changes are temporary until database integration.
-          </p>
-        </div>
 
         {/* KPI cards */}
         <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
@@ -440,13 +640,12 @@ export default function InventoryPage() {
                       </td>
 
                       <td className="px-3 py-4">
-                        <span className={`rounded-md px-2 py-1 text-[9px] ${
-                          out
-                            ? 'bg-rose-400/10 text-rose-300'
-                            : low
-                              ? 'bg-amber-400/10 text-amber-300'
-                              : 'bg-emerald-400/10 text-emerald-300'
-                        }`}>
+                        <span className={`rounded-md px-2 py-1 text-[9px] ${out
+                          ? 'bg-rose-400/10 text-rose-300'
+                          : low
+                            ? 'bg-amber-400/10 text-amber-300'
+                            : 'bg-emerald-400/10 text-emerald-300'
+                          }`}>
                           {out ? 'Out of stock' : low ? 'Low stock' : 'In stock'}
                         </span>
                       </td>
@@ -511,13 +710,12 @@ export default function InventoryPage() {
             {movements.slice(0, 8).map(movement => (
               <div key={movement.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
                 <div className="flex min-w-0 items-center gap-3">
-                  <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${
-                    movement.type === 'Stock In'
-                      ? 'bg-emerald-400/10 text-emerald-300'
-                      : movement.type === 'Stock Out'
-                        ? 'bg-rose-400/10 text-rose-300'
-                        : 'bg-amber-400/10 text-amber-300'
-                  }`}>
+                  <div className={`grid h-9 w-9 shrink-0 place-items-center rounded-xl ${movement.type === 'Stock In'
+                    ? 'bg-emerald-400/10 text-emerald-300'
+                    : movement.type === 'Stock Out'
+                      ? 'bg-rose-400/10 text-rose-300'
+                      : 'bg-amber-400/10 text-amber-300'
+                    }`}>
                     {movement.type === 'Stock In'
                       ? <ArrowDownToLine size={15} />
                       : movement.type === 'Stock Out'
@@ -539,8 +737,11 @@ export default function InventoryPage() {
                     {movement.type}
                   </span>
                   <span className="text-xs font-semibold text-white">
-                    {movement.type === 'Stock Out' ? '-' : '+'}
-                    {movement.quantity}
+                    {movement.type === 'Stock In'
+                      ? `+${movement.quantity}`
+                      : movement.type === 'Stock Out'
+                        ? `-${movement.quantity}`
+                        : `→ ${movement.quantity}`}
                   </span>
                 </div>
               </div>
@@ -610,9 +811,9 @@ export default function InventoryPage() {
                 </label>
               </div>
 
-              <div className="grid grid-cols-3 gap-3">
+              <div className={`grid gap-3 ${editingId ? 'grid-cols-2' : 'grid-cols-3'}`}>
                 {[
-                  { key: 'stock', label: 'Opening stock' },
+                  ...(!editingId ? [{ key: 'stock', label: 'Opening stock' }] : []),
                   { key: 'lowStockAt', label: 'Alert threshold' },
                   { key: 'costPerUnit', label: 'Unit cost (NPR)' },
                 ].map(field => (
@@ -635,8 +836,12 @@ export default function InventoryPage() {
                 <button type="button" onClick={() => setModalOpen(false)} className="rounded-xl border border-line px-4 py-2.5 text-xs text-slate-400">
                   Cancel
                 </button>
-                <button type="submit" className="rounded-xl bg-violet-500 px-5 py-2.5 text-xs font-semibold text-white hover:bg-violet-400">
-                  {editingId ? 'Save changes' : 'Add item'}
+                <button
+                  type="submit"
+                  disabled={saving}
+                  className="rounded-xl bg-violet-500 px-5 py-2.5 text-xs font-semibold text-white hover:bg-violet-400 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {saving ? 'Saving...' : editingId ? 'Save changes' : 'Add item'}
                 </button>
               </div>
             </form>
@@ -717,8 +922,12 @@ export default function InventoryPage() {
                 <button type="button" onClick={() => setMovementOpen(false)} className="rounded-xl border border-line px-4 py-2.5 text-xs text-slate-400">
                   Cancel
                 </button>
-                <button type="submit" disabled={items.length === 0} className="rounded-xl bg-violet-500 px-5 py-2.5 text-xs font-semibold text-white disabled:opacity-40">
-                  Save movement
+                <button
+                  type="submit"
+                  disabled={saving || items.length === 0}
+                  className="rounded-xl bg-violet-500 px-5 py-2.5 text-xs font-semibold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                >
+                  {saving ? 'Saving...' : 'Save movement'}
                 </button>
               </div>
             </form>

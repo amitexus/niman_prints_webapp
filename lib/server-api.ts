@@ -3,6 +3,18 @@ import { cookies } from "next/headers";
 
 const BACKEND_URL = process.env.BACKEND_API_URL;
 
+export class ServerApiError extends Error {
+  status: number;
+  detail: string;
+
+  constructor(status: number, detail: string) {
+    super(detail);
+    this.name = "ServerApiError";
+    this.status = status;
+    this.detail = detail;
+  }
+}
+
 export async function serverApi(
   endpoint: string,
   options: RequestInit = {}
@@ -11,11 +23,17 @@ export async function serverApi(
   const accessToken = cookieStore.get("np_access_token")?.value;
 
   if (!BACKEND_URL) {
-    throw new Error("Backend API URL is not configured.");
+    throw new ServerApiError(
+      500,
+      "Backend API URL is not configured."
+    );
   }
 
   if (!accessToken) {
-    throw new Error("Authentication required.");
+    throw new ServerApiError(
+      401,
+      "Authentication required."
+    );
   }
 
   const response = await fetch(
@@ -33,8 +51,10 @@ export async function serverApi(
 
   if (!response.ok) {
     const message = await response.text();
-    throw new Error(
-      `Backend API error (${response.status}): ${message}`
+
+    throw new ServerApiError(
+      response.status,
+      message || "Backend API request failed."
     );
   }
 
